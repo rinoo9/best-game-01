@@ -1,57 +1,55 @@
-// The player's profile: coins, gear, island, collection and best catches, kept
-// in localStorage between visits (this browser only; a fresh profile when it is off).
+// The saved profile: coins, collection, outfit, rods, level and best score,
+// kept in localStorage between visits (this browser only).
 
 import { SAVE_KEY } from './config.js';
 
-/** A fresh profile for a new angler. */
-export function freshProfile() {
+/** A fresh profile for a new player. */
+export function newProfile() {
   return {
     coins: 0,
-    rod: 'bamboo',
-    boat: 'rowboat',
-    ownedRods: ['bamboo'],
-    ownedBoats: ['rowboat'],
-    island: 'sunny',
+    bestScore: 0,
+    level: 1,
+    xp: 0,
     caught: {},
     catches: [],
-    totalCasts: 0,
-    totalCaught: 0,
-    divineCaught: false,
-    bestScore: 0,
+    ownedRods: ['bamboo'],
+    rod: 'bamboo',
+    ownedClothes: ['green-shirt'],
+    outfit: { hat: null, top: 'green-shirt', shoes: null, accessory: null },
+    zone: 'sunny',
   };
 }
 
-/** Load the saved profile, or a fresh one when there is none or it is broken. */
+/** Load the profile, or a fresh one when nothing is saved. */
 export function loadProfile() {
   try {
     const raw = window.localStorage.getItem(SAVE_KEY);
-    if (raw === null) return freshProfile();
+    if (!raw) return newProfile();
     const saved = JSON.parse(raw);
-    const profile = freshProfile();
-    return { ...profile, ...saved, caught: saved.caught ?? {}, catches: saved.catches ?? [] };
-  } catch {
-    return freshProfile();
+    const fresh = newProfile();
+    return { ...fresh, ...saved, caught: saved.caught ?? {}, outfit: { ...fresh.outfit, ...(saved.outfit ?? {}) } };
+  } catch (error) {
+    return newProfile();
   }
 }
 
-/** Save the profile; a storage failure keeps the game running in memory only. */
+/** Save the profile; never throws (a full or blocked storage is ignored). */
 export function saveProfile(profile) {
   try {
     window.localStorage.setItem(SAVE_KEY, JSON.stringify(profile));
-  } catch {
-    // Storage can be off (private windows): progress then lasts this visit only.
+  } catch (error) {
+    // Storage unavailable — the session keeps playing unsaved.
   }
 }
 
-/** Record a catch: coins, collection, best catches and the win flags. */
-export function recordCatch(profile, fish) {
+/** Record a catch: coins, collection, best list and XP. Returns the XP gained. */
+export function recordCatch(profile, fish, xp) {
   profile.coins += fish.coins;
-  profile.totalCaught += 1;
-  profile.catches.push({ id: fish.id, name: fish.name, tier: fish.tier, weight: fish.weight, coins: fish.coins, island: fish.island });
-  if (profile.catches.length > 200) profile.catches.splice(0, profile.catches.length - 200);
-  const best = profile.caught[fish.id];
-  if (!best || fish.weight > best.weight) profile.caught[fish.id] = { weight: fish.weight, coins: fish.coins };
-  if (fish.tier === 'divine') profile.divineCaught = true;
   profile.bestScore = Math.max(profile.bestScore, profile.coins);
+  profile.caught[fish.id] = (profile.caught[fish.id] ?? 0) + 1;
+  profile.catches.push({ id: fish.id, name: fish.name, tier: fish.tier, weight: fish.weight, coins: fish.coins, zone: fish.zone });
+  if (profile.catches.length > 50) profile.catches = profile.catches.slice(-50);
+  profile.xp += xp;
   saveProfile(profile);
+  return xp;
 }

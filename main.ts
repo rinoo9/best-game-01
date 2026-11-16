@@ -1,10 +1,10 @@
-// Reel Legends for best-game-01 (Node 22, standard library only): the game is
+// Reel Legends 3D for best-game-01 (Node 22, standard library only): the game is
 // this directory's game/ folder, plain static files a desktop browser loads
-// offline (game/index.html and its ES modules, no library and no network
-// request), and the program hands it in. It copies game/ and screenshots/ from
-// beside this file to /output and writes /output/dossier.json, the summary the
-// judge reads, with the vendored make.fun library. The copy and the dossier are
-// deterministic: two runs write the same bytes.
+// offline (game/index.html and its ES modules, plus the vendored three.js
+// module under game/js/, no network request), and the program hands it in. It
+// copies game/ and screenshots/ from beside this file to /output and writes
+// /output/dossier.json, the summary the judge reads, with the vendored make.fun
+// library. The copy and the dossier are deterministic: two runs write the same bytes.
 //
 // Serve the game locally with any static server rooted at game/, then open
 // game/index.html in desktop Chrome. Outside the grader's container,

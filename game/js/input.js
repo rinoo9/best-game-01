@@ -1,87 +1,89 @@
-// Keyboard and pointer input. One-shot presses (cast, hook, confirm) are queued as
-// bit flags and taken once by the loop, so a press between two frames is never lost
-// and never counted twice. Holding the pointer or Space reels the line in.
+// Keyboard and mouse: WASD/arrows to move, mouse drag to orbit the camera,
+// click (a press without a drag) to cast, hook and reel, Space the same.
+// The game reads the frame's accumulated deltas and click through `take`.
 
-export const ACTION_CONFIRM = 1;
-export const ACTION_PAUSE = 2;
-export const ACTION_SHOP = 4;
-export const ACTION_MAP = 8;
-export const ACTION_FISHDEX = 16;
-export const ACTION_RESTART = 32;
-
-const CONFIRM = new Set(['Space', 'Enter']);
-const PAUSE = new Set(['KeyP', 'Escape']);
-
+/** Track input on the canvas element. */
 export function createInput(canvas) {
-  let actions = 0;
-  let reeling = false;
-  let pointer = { x: 0, y: 0, down: false };
-
-  function confirm() {
-    actions |= ACTION_CONFIRM;
-  }
+  const keys = new Set();
+  let dragDX = 0;
+  let dragDY = 0;
+  let dragging = false;
+  let downX = 0;
+  let downY = 0;
+  let moved = 0;
+  let clickQueued = false;
+  let spaceQueued = false;
 
   window.addEventListener('keydown', (event) => {
-    if (CONFIRM.has(event.code)) {
-      if (!event.repeat) confirm();
-      reeling = true;
-    } else if (PAUSE.has(event.code)) {
-      if (!event.repeat) actions |= ACTION_PAUSE;
-    } else if (event.code === 'KeyS') {
-      if (!event.repeat) actions |= ACTION_SHOP;
-    } else if (event.code === 'KeyM') {
-      if (!event.repeat) actions |= ACTION_MAP;
-    } else if (event.code === 'KeyF') {
-      if (!event.repeat) actions |= ACTION_FISHDEX;
-    } else if (event.code === 'KeyR') {
-      if (!event.repeat) actions |= ACTION_RESTART;
-    } else {
-      return;
+    if (event.code === 'Space') {
+      if (!event.repeat) spaceQueued = true;
+      event.preventDefault();
     }
-    event.preventDefault();
+    keys.add(event.code);
   });
   window.addEventListener('keyup', (event) => {
-    if (CONFIRM.has(event.code)) reeling = false;
+    keys.delete(event.code);
   });
   window.addEventListener('blur', () => {
-    reeling = false;
-    pointer.down = false;
+    keys.clear();
   });
 
-  function trackPointer(event) {
-    const rect = canvas.getBoundingClientRect();
-    pointer = {
-      x: ((event.clientX - rect.left) / rect.width) * 1280,
-      y: ((event.clientY - rect.top) / rect.height) * 720,
-      down: pointer.down,
-    };
-  }
-  canvas.addEventListener('pointermove', trackPointer);
-  canvas.addEventListener('pointerdown', (event) => {
-    trackPointer(event);
-    pointer.down = true;
-    reeling = true;
-    confirm();
+  canvas.addEventListener('mousedown', (event) => {
+    dragging = true;
+    moved = 0;
+    downX = event.clientX;
+    downY = event.clientY;
   });
-  window.addEventListener('pointerup', () => {
-    pointer.down = false;
-    reeling = false;
+  window.addEventListener('mousemove', (event) => {
+    if (!dragging) return;
+    const dx = event.movementX ?? 0;
+    const dy = event.movementY ?? 0;
+    dragDX += dx;
+    dragDY += dy;
+    moved += Math.abs(dx) + Math.abs(dy);
+  });
+  window.addEventListener('mouseup', (event) => {
+    if (!dragging) return;
+    dragging = false;
+    // A press that barely moved is a click, not a camera drag.
+    if (moved < 6 && event.target === canvas) clickQueued = true;
+    void downX;
+    void downY;
   });
 
   return {
-    /** Whether the reel is held down right now (pointer or Space). */
-    isReeling() {
-      return reeling;
+    /** Is a key held (by KeyboardEvent.code)? */
+    held(code) {
+      return keys.has(code);
     },
-    /** The pointer's position in logical 1280x720 coordinates. */
-    pointer() {
-      return pointer;
+
+    /** Is any of these movement keys held? */
+    moveHeld() {
+      return keys.has('KeyW') || keys.has('ArrowUp') || keys.has('KeyS') || keys.has('ArrowDown')
+        || keys.has('KeyA') || keys.has('ArrowLeft') || keys.has('KeyD') || keys.has('ArrowRight');
     },
-    /** The one-shot presses since the last call, as ACTION_* flags. */
-    takeActions() {
-      const taken = actions;
-      actions = 0;
-      return taken;
+
+    /** The frame's movement direction in camera space: { x, z } or null. */
+    moveVector() {
+      let x = 0;
+      let z = 0;
+      if (keys.has('KeyW') || keys.has('ArrowUp')) z -= 1;
+      if (keys.has('KeyS') || keys.has('ArrowDown')) z += 1;
+      if (keys.has('KeyA') || keys.has('ArrowLeft')) x -= 1;
+      if (keys.has('KeyD') || keys.has('ArrowRight')) x += 1;
+      if (x === 0 && z === 0) return null;
+      const len = Math.hypot(x, z);
+      return { x: x / len, z: z / len };
+    },
+
+    /** Consume and return the frame's camera orbit deltas and action presses. */
+    take() {
+      const out = { dx: dragDX, dy: dragDY, click: clickQueued, space: spaceQueued };
+      dragDX = 0;
+      dragDY = 0;
+      clickQueued = false;
+      spaceQueued = false;
+      return out;
     },
   };
 }

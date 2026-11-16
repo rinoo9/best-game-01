@@ -1,14 +1,16 @@
-// Every tuning number, colour and data table in one place. The playfield is a fixed
-// 1280x720 logical area; the renderer scales it to the window, so no rule below
-// depends on the screen size.
+// Every tuning number, colour and data table in one place. The 3D world is one
+// walkable island, about 110 units across, split into four fishing zones by
+// quadrant: Sunny Beach (south-west), Coral Reef (south-east), Misty Lagoon
+// (north-west) and Ember Volcano (north-east). A zone is where the player
+// stands; its fish table is what bites there.
 
-export const FIELD = { width: 1280, height: 720, waterY: 430, horizonY: 300 };
+export const WORLD = { radius: 55, waterY: 0.4, volcanoX: 30, volcanoZ: -30 };
 
 /** The simulation's fixed step, in seconds: 60 updates a second whatever the display's rate. */
 export const STEP = 1 / 60;
 
-/** Where the best score and the collection are kept between visits (this browser only). */
-export const SAVE_KEY = 'reel-legends.save.v1';
+/** Where the profile is kept between visits (this browser only). */
+export const SAVE_KEY = 'reel-legends-3d.save.v1';
 
 /** Rarity tiers: the label, the 1-in-N odds the catch reveal shows, the glow colour,
  *  the coin range a catch of the tier pays, and the fight the fish puts up. */
@@ -31,20 +33,12 @@ export const RODS = [
   { id: 'celestial',  name: 'Celestial Rod',  price: 8000, cast: 2.2, strength: 2.5, luck: 3.0, blurb: 'Strung with starlight. The Divine can feel it.' },
 ];
 
-/** Boats: each unlocks a further island (the Yacht also doubles golden hour). */
-export const BOATS = [
-  { id: 'rowboat',   name: 'Rowboat',   price: 0,     unlocks: 'coral', speed: 1.0, blurb: 'Slow, steady, yours from the start.' },
-  { id: 'sailboat',  name: 'Sailboat',  price: 800,   unlocks: 'misty', speed: 1.6, blurb: 'Catches the wind to Misty Lagoon.' },
-  { id: 'speedboat', name: 'Speedboat', price: 2500,  unlocks: 'ember', speed: 2.4, blurb: 'Roars across the waves to Ember Isle.' },
-  { id: 'yacht',     name: 'Yacht',     price: 10000, unlocks: null,   speed: 3.0, blurb: 'Golden hour lasts twice as long aboard.' },
-];
-
-/** Islands: palette, required boat, fish table and signature legendary. */
-export const ISLANDS = [
+/** Fishing zones: palette, fish table and signature legendary. */
+export const ZONES = [
   {
-    id: 'sunny', name: 'Sunny Shore', boat: null, unlockText: 'Home waters',
+    id: 'sunny', name: 'Sunny Beach', center: [-28, 28],
     blurb: 'Warm shallows where every angler begins.',
-    sky: ['#7ec8f7', '#cfeefc'], water: ['#2fa8c9', '#0d6e8f'], sand: '#f2d492', accent: '#ffb020',
+    sky: 0x7ec8f7, grass: 0x58c96b, sand: 0xf2d492, water: 0x2fa8c9, accent: 0xffb020,
     fish: [
       { id: 'sunny-minnow', name: 'Sunny Minnow', tier: 'common', weight: [0.1, 0.4], body: '#ffd166', belly: '#fff3c4' },
       { id: 'striped-perch', name: 'Striped Perch', tier: 'common', weight: [0.3, 1.2], body: '#8ecae6', belly: '#e0fbfc' },
@@ -55,9 +49,9 @@ export const ISLANDS = [
     ],
   },
   {
-    id: 'coral', name: 'Coral Reef', boat: 'rowboat', unlockText: 'Needs a Rowboat',
+    id: 'coral', name: 'Coral Reef', center: [28, 28],
     blurb: 'A bright reef buzzing with colour.',
-    sky: ['#5ec8e8', '#b8f0e0'], water: ['#1fb6a6', '#0a7d74'], sand: '#f6e27a', accent: '#ff6b9d',
+    sky: 0x5ec8e8, grass: 0x2fbf8f, sand: 0xf6e27a, water: 0x1fb6a6, accent: 0xff6b9d,
     fish: [
       { id: 'reef-clownfish', name: 'Reef Clownfish', tier: 'common', weight: [0.1, 0.3], body: '#ff7b00', belly: '#ffffff' },
       { id: 'pink-anemonefish', name: 'Pink Anemonefish', tier: 'uncommon', weight: [0.1, 0.4], body: '#ff8fab', belly: '#ffe5ec' },
@@ -68,9 +62,9 @@ export const ISLANDS = [
     ],
   },
   {
-    id: 'misty', name: 'Misty Lagoon', boat: 'sailboat', unlockText: 'Needs a Sailboat',
+    id: 'misty', name: 'Misty Lagoon', center: [-28, -28],
     blurb: 'Fog on the water, glow beneath it.',
-    sky: ['#9aa7c7', '#d9dee9'], water: ['#3d5a80', '#1d3557'], sand: '#b8c0cc', accent: '#80ed99',
+    sky: 0x9aa7c7, grass: 0x6a994e, sand: 0xb8c0cc, water: 0x3d5a80, accent: 0x80ed99,
     fish: [
       { id: 'fog-carp', name: 'Fog Carp', tier: 'common', weight: [0.5, 2.0], body: '#adb5bd', belly: '#e9ecef' },
       { id: 'glow-tadpole', name: 'Glow Tadpole', tier: 'uncommon', weight: [0.1, 0.3], body: '#80ed99', belly: '#d8f3dc' },
@@ -81,9 +75,9 @@ export const ISLANDS = [
     ],
   },
   {
-    id: 'ember', name: 'Ember Isle', boat: 'speedboat', unlockText: 'Needs a Speedboat',
+    id: 'ember', name: 'Ember Volcano', center: [28, -28],
     blurb: 'Black sand, hot springs, and the rarest fish alive.',
-    sky: ['#f4845f', '#ffd6a5'], water: ['#c1440e', '#7f1d1d'], sand: '#4a4e69', accent: '#ff5400',
+    sky: 0xf4845f, grass: 0x8a5a3b, sand: 0x4a4e69, water: 0xc1440e, accent: 0xff5400,
     fish: [
       { id: 'ember-minnow', name: 'Ember Minnow', tier: 'common', weight: [0.1, 0.4], body: '#e85d04', belly: '#ffba08' },
       { id: 'lava-guppy', name: 'Lava Guppy', tier: 'uncommon', weight: [0.1, 0.5], body: '#dc2f02', belly: '#ff8500' },
@@ -97,11 +91,38 @@ export const ISLANDS = [
 ];
 
 /** Every fish in the game, flattened, for the Fishdex. */
-export const ALL_FISH = ISLANDS.flatMap((island) => island.fish.map((fish) => ({ ...fish, island: island.id, islandName: island.name })));
+export const ALL_FISH = ZONES.flatMap((zone) => zone.fish.map((fish) => ({ ...fish, zone: zone.id, zoneName: zone.name })));
 
 /** Golden hour: how often it starts (seconds of play) and how long it lasts. */
-export const GOLDEN_HOUR = { everySeconds: 210, durationSeconds: 60, yachtDurationSeconds: 120 };
+export const GOLDEN_HOUR = { everySeconds: 210, durationSeconds: 60 };
 
+/** The clothing and accessory shop: every item is a procedural 3D attachment
+ *  on the chibi angler. `slot` is hat, top, shoes or accessory. */
+export const CLOTHES = [
+  { id: 'straw-hat', name: 'Straw Hat', slot: 'hat', price: 100, color: '#e9c46a', blurb: 'Sunny and honest.' },
+  { id: 'cap', name: 'Lucky Cap', slot: 'hat', price: 150, color: '#4361ee', blurb: 'Worn backwards, obviously.' },
+  { id: 'pirate-hat', name: 'Pirate Hat', slot: 'hat', price: 800, color: '#212529', blurb: 'For the seven seas and one lagoon.' },
+  { id: 'wizard-hat', name: 'Wizard Hat', slot: 'hat', price: 500, color: '#7209b7', blurb: 'It knows where the fish are.' },
+  { id: 'crown', name: 'Golden Crown', slot: 'hat', price: 2000, color: '#ffd60a', blurb: 'Royalty fishes here.' },
+  { id: 'green-shirt', name: 'Green Shirt', slot: 'top', price: 0, color: '#58c96b', blurb: 'Your trusty first shirt.' },
+  { id: 'red-shirt', name: 'Red Shirt', slot: 'top', price: 120, color: '#e63946', blurb: 'Bold. The fish can tell.' },
+  { id: 'blue-shirt', name: 'Blue Shirt', slot: 'top', price: 120, color: '#3fa9f5', blurb: 'Matches the lagoon.' },
+  { id: 'golden-shirt', name: 'Golden Shirt', slot: 'top', price: 600, color: '#ffb020', blurb: 'Shines like a catch.' },
+  { id: 'sandals', name: 'Sandals', slot: 'shoes', price: 80, color: '#b08968', blurb: 'Beach-ready.' },
+  { id: 'sneakers', name: 'Sneakers', slot: 'shoes', price: 200, color: '#f8f9fa', blurb: 'For running to the next bite.' },
+  { id: 'boots', name: 'Explorer Boots', slot: 'shoes', price: 400, color: '#6c4a2f', blurb: 'Volcano-proof, probably.' },
+  { id: 'angel-wings', name: 'Angel Wings', slot: 'accessory', price: 1500, color: '#ffffff', blurb: 'Soft, glowing, slightly smug.' },
+  { id: 'backpack', name: 'Explorer Pack', slot: 'accessory', price: 300, color: '#8a5a3b', blurb: 'Holds snacks and spare hooks.' },
+  { id: 'sunglasses', name: 'Cool Shades', slot: 'accessory', price: 250, color: '#212529', blurb: 'The sun never stood a chance.' },
+  { id: 'cape', name: 'Hero Cape', slot: 'accessory', price: 700, color: '#b26bff', blurb: 'Flaps dramatically in the wind.' },
+];
+
+/** XP needed to reach the next level (level starts at 1). */
+export function xpForLevel(level) {
+  return 100 + (level - 1) * 80;
+}
+
+/** HUD palette and font (system fonts only — no network). */
 export const PALETTE = {
   panel: 'rgba(12, 24, 40, 0.88)',
   panelEdge: 'rgba(255, 255, 255, 0.25)',

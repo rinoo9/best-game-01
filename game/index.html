@@ -3,12 +3,119 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Reel Legends — a fishing adventure</title>
+<title>Reel Legends — 3D Fishing Adventure</title>
 <link rel="stylesheet" href="./css/style.css">
+<script type="importmap">
+{
+  "imports": {
+    "three": "./js/three.module.min.js"
+  }
+}
+</script>
 </head>
 <body>
-<canvas id="game" aria-label="Reel Legends: cast the line, hook the fish in the timing window, and reel it in without snapping the line"></canvas>
-<p id="status" role="status" aria-live="polite"></p>
+<div id="app">
+  <div id="scene-container"></div>
+
+  <!-- HUD -->
+  <div id="hud" class="hidden">
+    <div id="hud-top">
+      <div id="hud-left">
+        <span id="hud-coins">Coins: 0</span>
+        <span id="hud-level">Lv 1</span>
+        <span id="xp-bar"><span id="xp-fill"></span></span>
+        <span id="hud-rod">Bamboo Rod</span>
+      </div>
+      <div id="hud-center">
+        <span id="hud-zone">Sunny Beach</span>
+        <span id="hud-collection">Collection 0%</span>
+      </div>
+      <div id="hud-right">
+        <button id="btn-shop" type="button">Shop</button>
+        <button id="btn-map" type="button">Map (M)</button>
+        <button id="btn-dex" type="button">Fishdex (F)</button>
+        <button id="btn-pause" type="button">II</button>
+      </div>
+    </div>
+    <div id="golden-badge" class="hidden"></div>
+    <div id="prompt"></div>
+    <div id="banner" class="hidden"></div>
+    <div id="tension" class="hidden">
+      <div id="tension-label">TENSION</div>
+      <div id="tension-bar"><div id="tension-fill"></div></div>
+      <div id="reel-pct"></div>
+    </div>
+  </div>
+
+  <!-- Title screen -->
+  <div id="title-screen" class="panel hidden">
+    <h1>REEL LEGENDS</h1>
+    <p class="subtitle">A 3D fishing adventure across one magical island</p>
+    <p>Walk the island, cast your line, and collect all 25 fish —<br>
+    from Common to the Divine, 1 in 1,000,000.</p>
+    <p class="muted">WASD / arrows: walk &nbsp;·&nbsp; Drag mouse: look around &nbsp;·&nbsp; Space / click: cast · hook · reel (hold)<br>
+    Shop: dress your angler with hats, shoes and wings &nbsp;·&nbsp; M: Map &nbsp;·&nbsp; F: Fishdex &nbsp;·&nbsp; Esc: close</p>
+    <p id="title-best" class="muted"></p>
+    <button id="btn-start" type="button" class="big">Press Space or click to start</button>
+  </div>
+
+  <!-- Catch reveal -->
+  <div id="catch-panel" class="panel hidden">
+    <h2 id="catch-title">CAUGHT!</h2>
+    <div id="catch-visual"></div>
+    <div id="catch-name"></div>
+    <div id="catch-tier"></div>
+    <div id="catch-stats" class="muted"></div>
+    <button id="btn-catch-ok" type="button" class="big">Keep fishing</button>
+  </div>
+
+  <!-- Shop -->
+  <div id="shop-panel" class="panel side hidden">
+    <h2>Outfit Shop</h2>
+    <div id="shop-coins"></div>
+    <div id="shop-tabs">
+      <button type="button" data-tab="hat">Hats</button>
+      <button type="button" data-tab="top">Tops</button>
+      <button type="button" data-tab="shoes">Shoes</button>
+      <button type="button" data-tab="accessory">Accessories</button>
+      <button type="button" data-tab="rod">Rods</button>
+    </div>
+    <div id="shop-rows"></div>
+    <button id="btn-shop-close" type="button">Close (Esc)</button>
+  </div>
+
+  <!-- Map -->
+  <div id="map-panel" class="panel hidden">
+    <h2>Island Map</h2>
+    <div id="map-rows"></div>
+    <button id="btn-map-close" type="button">Close (Esc)</button>
+  </div>
+
+  <!-- Fishdex -->
+  <div id="dex-panel" class="panel hidden">
+    <h2>Fishdex</h2>
+    <div id="dex-count" class="muted"></div>
+    <div id="dex-best" class="muted"></div>
+    <div id="dex-rows"></div>
+    <button id="btn-dex-close" type="button">Close (Esc)</button>
+  </div>
+
+  <!-- Win -->
+  <div id="win-panel" class="panel hidden">
+    <h2>YOU DID IT!</h2>
+    <p id="win-text"></p>
+    <button id="btn-win-restart" type="button" class="big">Play again</button>
+    <button id="btn-win-continue" type="button">Keep exploring</button>
+  </div>
+
+  <!-- Pause -->
+  <div id="pause-panel" class="panel hidden">
+    <h2>Paused</h2>
+    <p class="muted">Take a breath. The fish will wait.</p>
+    <button id="btn-resume" type="button" class="big">Resume</button>
+    <button id="btn-pause-restart" type="button">Restart</button>
+  </div>
+</div>
 <script type="module" src="./js/main.js"></script>
 </body>
 </html>

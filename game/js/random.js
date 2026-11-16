@@ -1,9 +1,11 @@
-// A small seeded random number generator (mulberry32): the same seed gives the same
-// game, which is what makes the screenshot scenes repeatable.
+// Seeded randomness: the same seed always draws the same numbers, so the
+// screenshot scenes stage exactly the same way every time.
 
-export function createRandom(seed) {
-  let a = seed | 0;
+/** A small fast seeded PRNG (mulberry32). */
+export function mulberry32(seed) {
+  let a = seed >>> 0;
   return function random() {
+    a |= 0;
     a = (a + 0x6d2b79f5) | 0;
     let t = Math.imul(a ^ (a >>> 15), 1 | a);
     t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
@@ -11,17 +13,17 @@ export function createRandom(seed) {
   };
 }
 
-/** A roll in [min, max) from a random function. */
+/** A number in [min, max) from a random function. */
 export function range(random, min, max) {
   return min + random() * (max - min);
 }
 
-/** One item of a list, picked by a random function. */
-export function pick(random, list) {
-  return list[Math.floor(random() * list.length)];
+/** An integer in [min, max] from a random function. */
+export function rangeInt(random, min, max) {
+  return Math.floor(range(random, min, max + 1));
 }
 
-/** Format 1-in-N odds with thousands separators: 1000000 -> "1,000,000". */
-export function oddsText(n) {
-  return n.toLocaleString('en-US');
+/** Pick one entry of a list at random. */
+export function pick(random, list) {
+  return list[Math.floor(random() * list.length)];
 }

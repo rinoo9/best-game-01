@@ -1,87 +1,105 @@
-// The screenshot scenes behind ?shot=title|play|catch|shop. Each one plays the real
-// rules forward from a fresh session for a fixed number of steps, steered by a
-// simple autopilot (hook on the bite, reel while tension is low, ease off when it
-// climbs), so the frame is what a short game really looks like and the same seed
-// always gives the same frame.
+// The screenshot scenes: each `shot` URL param stages a real game state with
+// the real scene and render code (no mockups), deterministically with &seed=1.
+// main.js renders the staged scene and sets window.__shotReady.
 
-import { STEP } from './config.js';
+import { ZONES } from './config.js';
 import { fishOfTier } from './fish.js';
-import { PHASE_BITE, PHASE_CAUGHT, PHASE_REELING, PHASE_WAITING } from './fishing.js';
+import { PHASE_REELING } from './fishing.js';
+import { rodById } from './shop.js';
 
-const SAMPLE = STEP;
-const PLAY_STEPS = 60 * 14;
-const TENSION_EASE = 62;
+function zoneName(id) {
+  const zone = ZONES.find((entry) => entry.id === id);
+  return zone ? zone.name : id;
+}
 
-/**
- * Stage the named scene on the game's live objects and return the screen to draw.
- * `game` holds { random, fishing, profile, rod, luck, goldenHour }.
- */
-export function stageShot(name, game) {
+/** The demo profile the shots stage with: coins, a carbon rod, a few catches. */
+function demoProfile(profile) {
+  profile.coins = 1240;
+  profile.bestScore = 1240;
+  profile.level = 3;
+  profile.xp = 40;
+  profile.rod = 'carbon';
+  profile.ownedRods = ['bamboo', 'fiberglass', 'carbon'];
+  profile.caught = {
+    'sunny-minnow': 2, 'striped-perch': 1, 'blue-gill': 1,
+    'reef-clownfish': 1, 'coral-dragon': 1, 'golden-carp': 1,
+  };
+  profile.catches = [{ id: 'coral-dragon', name: 'Coral Dragon', tier: 'legendary', weight: 8, coins: 1150, zone: 'coral' }];
+  profile.outfit = { hat: null, top: 'green-shirt', shoes: null, accessory: null };
+  profile.ownedClothes = ['green-shirt'];
+}
+
+export function stageShot(name, game, rng) {
+  void rng;
+  demoProfile(game.profile);
+  game.rod = rodById('carbon');
+  game.angler.setOutfit(game.profile.outfit);
+  game.screen = 'play';
+  game.ui.hideAllPanels();
+  game.ui.hideTitle();
+
+  if (name === 'title') {
+    // Front view of the chibi on the beach, village and island behind.
+    game.placePlayer(0, 24, 0);
+    game.frameCamera(0, 3.4, 34.5, 0, 1.6, 24);
+    game.ui.showTitle(game.profile.bestScore, 24);
+    return;
+  }
+
+  if (name === 'play') {
+    // Third-person view behind the chibi at the dock, mid-reel.
+    const dock = game.world.dockEnd;
+    game.placePlayer(dock.x + 1.2, dock.z + 1.2, -Math.PI / 4);
+    const fish = fishOfTier('coral', 'epic');
+    const session = game.fishing.state;
+    session.phase = PHASE_REELING;
+    session.fish = { ...fish, zoneName: zoneName('coral') };
+    session.distanceTotal = 150;
+    session.distance = 68;
+    session.tension = 62;
+    session.fighting = true;
+    session.bobber = {
+      x: game.player.x + Math.sin(game.player.facing) * 6.5,
+      y: 0.7,
+      z: game.player.z + Math.cos(game.player.facing) * 6.5,
+    };
+    game.showFishingGear(true);
+    game.cameraOrbit.yaw = Math.PI * 0.75;
+    game.cameraOrbit.pitch = 0.34;
+    game.cameraOrbit.dist = 9.5;
+    game.updateCamera();
+    game.zone = 'sunny';
+    game.ui.updateHUD(game.hudState());
+    game.ui.setTension(true, 62, 0.55);
+    game.ui.setPrompt('Hold SPACE to reel!');
+    return;
+  }
+
   if (name === 'catch') {
-    stageCatch(game);
-    return { screen: 'catch' };
+    // Legendary catch reveal over the 3D scene at the dock.
+    const dock = game.world.dockEnd;
+    game.placePlayer(dock.x + 1.2, dock.z + 1.2, Math.PI * 0.15);
+    const fish = fishOfTier('coral', 'legendary');
+    game.frameCamera(dock.x + 7, 3.6, dock.z + 8, dock.x, 1.5, dock.z);
+    game.ui.updateHUD(game.hudState());
+    game.ui.showCatch({ ...fish, zoneName: zoneName('coral') }, false);
+    return;
   }
+
   if (name === 'shop') {
-    return { screen: 'shop' };
+    // Customization shop open, chibi wearing a straw hat and angel wings.
+    game.profile.outfit = { hat: 'straw-hat', top: 'red-shirt', shoes: 'sneakers', accessory: 'angel-wings' };
+    game.profile.ownedClothes = ['green-shirt', 'straw-hat', 'red-shirt', 'sneakers', 'angel-wings'];
+    game.angler.setOutfit(game.profile.outfit);
+    game.placePlayer(-2, 22, 0.25);
+    game.frameCamera(2.5, 3.0, 33, 2.5, 1.5, 22);
+    game.ui.updateHUD(game.hudState());
+    game.ui.showShop(game.profile, 'hat');
+    return;
   }
-  if (name !== 'play') {
-    return { screen: 'title' };
-  }
-  return stagePlay(game);
-}
 
-/** Play forward until the line is mid-reel, then freeze there for the shot. */
-function stagePlay(game) {
-  const { fishing } = game;
-  fishing.cast(game.rod);
-  for (let i = 0; i < PLAY_STEPS; i += 1) {
-    const phase = fishing.state.phase;
-    if (phase === PHASE_WAITING || phase === PHASE_BITE) {
-      fishing.step(SAMPLE, false, game.rod, game.profile.island, game.luck, game.goldenHour.active);
-      if (fishing.state.phase === PHASE_BITE) {
-        fishing.hook(game.rod, game.luck, game.goldenHour.active, game.profile.island);
-      }
-      continue;
-    }
-    if (phase === PHASE_REELING) {
-      const hold = fishing.state.tension < TENSION_EASE;
-      fishing.step(SAMPLE, hold, game.rod, game.profile.island, game.luck, game.goldenHour.active);
-      const total = Math.max(1, fishing.state.distanceTotal);
-      const done = 1 - fishing.state.distance / total;
-      if (done >= 0.55) break;
-      continue;
-    }
-    break;
-  }
-  return { screen: 'fishing' };
-}
-
-/** Stage a Legendary catch reveal: one real cast, bite and hook, forced to the
- *  island's Legendary tier so the reveal shows what a legendary catch looks like. */
-function stageCatch(game) {
-  const { fishing } = game;
-  fishing.cast(game.rod);
-  for (let i = 0; i < 60 * 8; i += 1) {
-    const phase = fishing.state.phase;
-    if (phase === PHASE_WAITING) {
-      fishing.step(SAMPLE, false, game.rod, game.profile.island, game.luck, game.goldenHour.active);
-      continue;
-    }
-    if (phase === PHASE_BITE) {
-      fishing.hook(game.rod, game.luck, game.goldenHour.active, game.profile.island, 'legendary');
-      continue;
-    }
-    if (phase === PHASE_REELING) {
-      const hold = fishing.state.tension < TENSION_EASE;
-      fishing.step(SAMPLE, hold, game.rod, game.profile.island, game.luck, game.goldenHour.active);
-      continue;
-    }
-    if (phase === PHASE_CAUGHT) break;
-    break;
-  }
-  if (fishing.state.phase !== PHASE_CAUGHT) {
-    const legendary = fishOfTier(game.profile.island, 'legendary');
-    fishing.state.phase = PHASE_CAUGHT;
-    fishing.state.fish = legendary;
-  }
+  // Unknown shot: fall back to the title.
+  game.placePlayer(0, 24, 0);
+  game.frameCamera(0, 3.4, 34.5, 0, 1.6, 24);
+  game.ui.showTitle(game.profile.bestScore, 24);
 }

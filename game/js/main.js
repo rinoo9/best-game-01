@@ -1,380 +1,529 @@
-// Boot and the one loop: input is read every frame, the world advances in fixed
-// 1/60 s steps (several in a slow frame, none in a fast one), and the renderer
-// paints what is there. The game moves between screens: title, fishing, shop,
-// map, fishdex, paused, catch reveal and win.
-//
-// ?seed=N fixes the random draws. ?shot=title|play|catch|shop (with &seed=N)
-// stages that scene instead of running the loop, paints it twice and sets
-// window.__shotReady for a screenshot.
+// Reel Legends 3D: the game itself. Third-person chibi angler on a low-poly
+// island: walk with WASD, orbit the camera by dragging, fish at glowing spots
+// (Space to cast, hook and hold to reel), buy clothes that appear on the
+// character, level up, and hunt the Divine fish. ?shot=title|play|catch|shop
+// stages a screenshot scene instead of starting the loop.
 
-import { FIELD, STEP } from './config.js';
-import { ALL_FISH } from './config.js';
-import { createRandom, range } from './random.js';
-import { ACTION_CONFIRM, ACTION_FISHDEX, ACTION_MAP, ACTION_PAUSE, ACTION_RESTART, ACTION_SHOP, createInput } from './input.js';
-import { createAudio } from './audio.js';
+import * as THREE from 'three';
+import { RODS, STEP, WORLD, ZONES, xpForLevel } from './config.js';
+import { collectionPercent, xpForCatch } from './fish.js';
+import { mulberry32 } from './random.js';
+import { loadProfile, newProfile, recordCatch, saveProfile } from './save.js';
+import { createWorld, groundHeight, zoneAt } from './world.js';
+import { createAngler } from './character.js';
 import {
-  EVENT_BITE,
-  EVENT_CAUGHT,
-  EVENT_ESCAPED,
-  EVENT_REEL_TICK,
-  EVENT_SNAPPED,
-  PHASE_BITE,
-  PHASE_IDLE,
-  createFishing,
+  EVENT_BITE, EVENT_CAUGHT, EVENT_ESCAPED, EVENT_REEL_TICK, EVENT_SNAPPED,
+  PHASE_BITE, PHASE_IDLE, PHASE_REELING, PHASE_WAITING, createFishing,
 } from './fishing.js';
-import { buyBoat, buyRod, createShop, equipBoat, equipRod, equippedRod } from './shop.js';
-import { loadProfile, recordCatch, saveProfile } from './save.js';
-import { createGoldenHour, islandById, tickGoldenHour } from './islands.js';
-import { createRenderer, HUD_BUTTONS, fishdexHitRects, mapHitRects, shopHitRects } from './render.js';
+import { buyClothes, buyRod, equipClothes, equipRod, equippedRod } from './shop.js';
+import { createAudio } from './audio.js';
+import { createInput } from './input.js';
+import { createUI } from './ui.js';
 import { stageShot } from './shots.js';
 
-/** The longest frame the loop catches up on; a longer stall (a hidden tab) is dropped. */
-const MAX_FRAME = 0.25;
-
 const params = new URLSearchParams(window.location.search);
-const shot = params.get('shot');
-const seedParam = Number.parseInt(params.get('seed') ?? '', 10);
-const seed = Number.isInteger(seedParam) ? seedParam : Math.floor(Math.random() * 4294967296);
+const shotName = params.get('shot');
+const seed = Number(params.get('seed') ?? '1') || 1;
+const rng = mulberry32(seed);
 
-const canvas = document.getElementById('game');
-const status = document.getElementById('status');
-const random = createRandom(seed);
-const audio = createAudio();
-const input = createInput(canvas);
-const renderer = createRenderer(canvas);
-const profile = loadProfile();
-const fishing = createFishing(random);
-const goldenHour = createGoldenHour();
-const shop = createShop();
+function zoneName(id) {
+  const zone = ZONES.find((entry) => entry.id === id);
+  return zone ? zone.name : id;
+}
 
-const state = {
+function angleLerp(from, to, t) {
+  let d = (to - from) % (Math.PI * 2);
+  if (d > Math.PI) d -= Math.PI * 2;
+  if (d < -Math.PI) d += Math.PI * 2;
+  return from + d * t;
+}
+
+// ---- renderer, scene, camera, lights
+const container = document.getElementById('scene-container');
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+container.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x9fd8f0);
+scene.fog = new THREE.Fog(0x9fd8f0, 70, 230);
+
+const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 600);
+const hemi = new THREE.HemisphereLight(0xbfdfff, 0x3a7d44, 0.95);
+scene.add(hemi);
+const sunLight = new THREE.DirectionalLight(0xfff2cc, 1.15);
+sunLight.position.set(40, 60, 20);
+scene.add(sunLight);
+
+// ---- world, character, fishing gear
+const world = createWorld(scene);
+const angler = createAngler();
+scene.add(angler.group);
+
+const bobberGroup = new THREE.Group();
+const bobberTop = new THREE.Mesh(new THREE.SphereGeometry(0.26, 12, 8), new THREE.MeshLambertMaterial({ color: 0xff4d4d }));
+bobberTop.position.y = 0.1;
+const bobberBottom = new THREE.Mesh(new THREE.SphereGeometry(0.2, 12, 8), new THREE.MeshLambertMaterial({ color: 0xffffff }));
+bobberBottom.position.y = -0.12;
+bobberGroup.add(bobberTop, bobberBottom);
+bobberGroup.visible = false;
+scene.add(bobberGroup);
+
+const lineGeo = new THREE.BufferGeometry();
+lineGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(6), 3));
+const line = new THREE.Line(lineGeo, new THREE.LineBasicMaterial({ color: 0xf8f9fa, transparent: true, opacity: 0.9 }));
+line.visible = false;
+line.frustumCulled = false;
+scene.add(line);
+
+// ---- game state (one object, so shots.js can stage it)
+const game = {
+  scene,
+  camera,
+  renderer,
+  world,
+  angler,
+  profile: loadProfile(),
+  rod: null,
   screen: 'title',
-  time: 0,
-  profile,
-  fishing: fishing.state,
-  goldenHour,
-  shop,
-  selectedFish: null,
-  catchFish: null,
-  winReason: null,
-  message: '',
-  messageTimer: 0,
-  particles: [],
-  shadows: [],
-  prevScreen: 'fishing',
+  modal: null,
+  paused: false,
+  zone: 'sunny',
+  goldenHour: false,
+  goldenLeft: 0,
+  nextGoldenAt: 150,
+  playTime: 0,
+  pendingWin: null,
+  player: { x: -4, z: 24, facing: 0, moving: false, speed: 7 },
+  cameraOrbit: { yaw: Math.PI, pitch: 0.35, dist: 9 },
+  fishing: null,
+  ui: null,
+  audio: null,
+  input: null,
+  titleAngle: 0,
+};
+game.rod = equippedRod(game.profile);
+angler.setOutfit(game.profile.outfit);
+
+game.placePlayer = function placePlayer(x, z, facing) {
+  game.player.x = x;
+  game.player.z = z;
+  game.player.facing = facing;
+  game.angler.group.position.set(x, groundHeight(x, z), z);
+  game.angler.face(facing);
 };
 
-for (let i = 0; i < 6; i += 1) {
-  state.shadows.push({
-    x: range(random, 100, 1200),
-    y: range(random, FIELD.waterY + 50, 680),
-    size: range(random, 14, 30),
-    speed: range(random, 8, 26),
-    dir: random() < 0.5 ? -1 : 1,
-  });
-}
+game.frameCamera = function frameCamera(px, py, pz, tx, ty, tz) {
+  camera.position.set(px, py, pz);
+  camera.lookAt(tx, ty, tz);
+};
 
-function showMessage(text, seconds = 3) {
-  state.message = text;
-  state.messageTimer = seconds;
-}
+game.updateCamera = function updateCamera() {
+  const target = angler.group.position.clone();
+  target.y += 1.6;
+  const { yaw, pitch, dist } = game.cameraOrbit;
+  const offset = new THREE.Vector3(
+    Math.sin(yaw) * Math.cos(pitch) * dist,
+    Math.sin(pitch) * dist,
+    Math.cos(yaw) * Math.cos(pitch) * dist,
+  );
+  camera.position.copy(target).add(offset);
+  camera.lookAt(target);
+};
 
-function burst(x, y, color, count, speed = 120) {
-  for (let i = 0; i < count; i += 1) {
-    const angle = random() * Math.PI * 2;
-    const power = range(random, 0.3, 1) * speed;
-    state.particles.push({
-      x, y,
-      vx: Math.cos(angle) * power,
-      vy: Math.sin(angle) * power - 60,
-      life: range(random, 0.4, 0.9),
-      maxLife: 0.9,
-      color,
-      size: range(random, 2, 5),
-    });
-  }
-}
+game.showFishingGear = function showFishingGear(visible) {
+  angler.rod.visible = visible;
+  bobberGroup.visible = visible;
+  line.visible = visible;
+};
 
-function splashAt(x, y, color = '#bde0fe') {
-  burst(x, y, color, 10, 90);
-}
+/** Put the bobber and the line where the fishing session says they are. */
+game.positionFishingGear = function positionFishingGear() {
+  const phase = game.fishing.state.phase;
+  if (phase !== PHASE_WAITING && phase !== PHASE_BITE && phase !== PHASE_REELING) return;
+  const t = performance.now() * 0.001;
+  const b = game.fishing.state.bobber;
+  bobberGroup.position.set(b.x, 0.7 + Math.sin(t * 2) * 0.06 - game.fishing.state.dip, b.z);
+  const start = angler.group.position.clone();
+  start.y += 2.1;
+  start.x += Math.sin(game.player.facing) * 0.5;
+  start.z += Math.cos(game.player.facing) * 0.5;
+  const positions = lineGeo.attributes.position;
+  positions.setXYZ(0, start.x, start.y, start.z);
+  positions.setXYZ(1, b.x, bobberGroup.position.y, b.z);
+  positions.needsUpdate = true;
+};
 
-function luckOf() {
-  return equippedRod(profile).luck;
-}
+game.hudState = function hudState() {
+  return {
+    profile: game.profile,
+    xpNeed: xpForLevel(game.profile.level),
+    zoneName: zoneName(game.zone),
+    rodName: game.rod.name,
+    goldenHour: game.goldenHour,
+    goldenLeft: game.goldenLeft,
+  };
+};
 
-function openOverlay(screen) {
-  state.prevScreen = state.screen === 'fishing' ? 'fishing' : state.prevScreen;
-  state.screen = screen;
-  audio.click();
-}
+game.fishing = createFishing(rng);
+game.audio = createAudio();
+game.input = createInput(renderer.domElement);
 
-function closeOverlay() {
-  state.screen = 'fishing';
-  audio.click();
-}
-
-function collectCatch() {
-  const fish = fishing.state.fish;
-  if (fish === null) return;
-  recordCatch(profile, fish);
-  state.catchFish = null;
-  fishing.reset();
-  audio.coin();
-  if (profile.divineCaught) {
-    state.winReason = 'divine';
-    state.screen = 'win';
-    return;
-  }
-  if (Object.keys(profile.caught).length === ALL_FISH.length) {
-    state.winReason = 'collection';
-    state.screen = 'win';
-    return;
-  }
-  state.screen = 'fishing';
-  showMessage(`Caught ${fish.name}! +${fish.coins} coins.`);
-}
-
-function handleConfirm() {
-  const pointer = input.pointer();
-  if (state.screen === 'title') {
-    audio.unlock();
-    audio.click();
-    state.screen = 'fishing';
-    return;
-  }
-  if (state.screen === 'win') {
-    state.screen = 'fishing';
-    fishing.reset();
-    return;
-  }
-  if (state.screen === 'paused') {
-    state.screen = 'fishing';
-    return;
-  }
-  if (state.screen === 'catch') {
-    collectCatch();
-    return;
-  }
-  if (state.screen === 'shop' || state.screen === 'map' || state.screen === 'fishdex') {
-    handleOverlayClick(pointer);
-    return;
-  }
-  if (state.screen !== 'fishing') return;
-  for (const buttonDef of HUD_BUTTONS) {
-    if (pointer.x >= buttonDef.x && pointer.x <= buttonDef.x + buttonDef.w && pointer.y >= buttonDef.y && pointer.y <= buttonDef.y + buttonDef.h) {
-      openOverlay(buttonDef.id === 'shop' ? 'shop' : buttonDef.id === 'map' ? 'map' : 'fishdex');
-      return;
+// ---- helpers
+function nearestSpot() {
+  let best = null;
+  let bestDist = 5;
+  for (const spot of world.spots) {
+    const d = Math.hypot(game.player.x - spot.stand.x, game.player.z - spot.stand.z);
+    if (d < bestDist) {
+      bestDist = d;
+      best = spot;
     }
   }
-  if (fishing.state.phase === PHASE_IDLE) {
-    fishing.cast(equippedRod(profile));
-    profile.totalCasts += 1;
-    saveProfile(profile);
-    audio.splash();
-    splashAt(fishing.state.bobberX, fishing.state.bobberY);
-  } else if (fishing.state.phase === PHASE_BITE) {
-    if (fishing.hook(equippedRod(profile), luckOf(), goldenHour.active, profile.island)) {
-      audio.bite();
-    }
+  return best;
+}
+
+function cleanupFishing() {
+  game.fishing.reset();
+  game.showFishingGear(false);
+}
+
+function resolveCatch() {
+  const fish = game.fishing.state.fish;
+  if (!fish) return;
+  const xp = xpForCatch(fish);
+  recordCatch(game.profile, fish, xp);
+  game.audio.catchFanfare(fish.tier);
+  while (game.profile.xp >= xpForLevel(game.profile.level)) {
+    game.profile.xp -= xpForLevel(game.profile.level);
+    game.profile.level += 1;
+    game.audio.levelUp();
+    game.ui.banner(`Level up! You are now Lv ${game.profile.level}`);
+  }
+  saveProfile(game.profile);
+  cleanupFishing();
+  const complete = collectionPercent(new Set(Object.keys(game.profile.caught))) >= 100;
+  if (fish.tier === 'divine') {
+    game.pendingWin = 'You caught the Divine Aurora Leviathan — the rarest fish alive!';
+  } else if (complete) {
+    game.pendingWin = 'Collection complete! You caught all 25 fish!';
+  }
+  game.modal = 'catch';
+  game.ui.showCatch({ ...fish, zoneName: zoneName(fish.zone) }, fish.tier === 'divine');
+}
+
+function closePanels() {
+  const was = game.modal;
+  game.ui.hideAllPanels();
+  game.modal = null;
+  game.paused = false;
+  if (was === 'catch' && game.pendingWin) {
+    const text = game.pendingWin;
+    game.pendingWin = null;
+    game.audio.win();
+    game.ui.showWin(text);
+    game.modal = 'win';
   }
 }
 
-function handleOverlayClick(pointer) {
-  if (state.screen === 'shop') {
-    for (const hit of shopHitRects(shop)) {
-      if (pointer.x < hit.rect.x || pointer.x > hit.rect.x + hit.rect.w || pointer.y < hit.rect.y || pointer.y > hit.rect.y + hit.rect.h) continue;
-      if (hit.kind === 'close') {
-        closeOverlay();
-        return;
-      }
-      if (hit.kind === 'tab') {
-        shop.tab = hit.id;
-        audio.click();
-        return;
-      }
-      if (hit.kind === 'row') {
-        if (shop.tab === 'rods') {
-          if (profile.ownedRods.includes(hit.id)) equipRod(profile, hit.id);
-          else if (buyRod(profile, hit.id)) audio.coin();
-        } else {
-          if (profile.ownedBoats.includes(hit.id)) equipBoat(profile, hit.id);
-          else if (buyBoat(profile, hit.id)) audio.coin();
-        }
-        saveProfile(profile);
-        return;
-      }
-    }
-    closeOverlay();
-    return;
-  }
-  if (state.screen === 'map') {
-    for (const hit of mapHitRects(profile)) {
-      if (pointer.x < hit.rect.x || pointer.x > hit.rect.x + hit.rect.w || pointer.y < hit.rect.y || pointer.y > hit.rect.y + hit.rect.h) continue;
-      if (hit.kind === 'close') {
-        closeOverlay();
-        return;
-      }
-      if (hit.kind === 'travel') {
-        profile.island = hit.id;
-        saveProfile(profile);
-        audio.travel();
-        showMessage(`Sailed to ${islandById(hit.id).name}.`);
-        closeOverlay();
-        return;
-      }
-    }
-    closeOverlay();
-    return;
-  }
-  if (state.screen === 'fishdex') {
-    for (const hit of fishdexHitRects()) {
-      if (pointer.x < hit.rect.x || pointer.x > hit.rect.x + hit.rect.w || pointer.y < hit.rect.y || pointer.y > hit.rect.y + hit.rect.h) continue;
-      if (hit.kind === 'close') {
-        closeOverlay();
-        return;
-      }
-      if (hit.kind === 'fish') {
-        state.selectedFish = hit.id;
-        audio.click();
-        return;
-      }
-    }
-    closeOverlay();
-  }
+function startGame() {
+  game.audio.unlock();
+  game.screen = 'play';
+  game.ui.hideTitle();
+  game.ui.banner('Welcome to Sunny Beach! Walk to a glowing ring and press SPACE to cast.');
 }
 
-function handleActions() {
-  const actions = input.takeActions();
-  if (actions & ACTION_CONFIRM) handleConfirm();
-  if (actions & ACTION_PAUSE) {
-    if (state.screen === 'fishing') {
-      state.screen = 'paused';
-    } else if (state.screen === 'paused') {
-      state.screen = 'fishing';
-    } else if (state.screen === 'shop' || state.screen === 'map' || state.screen === 'fishdex') {
-      closeOverlay();
+function restartGame() {
+  game.profile = newProfile();
+  game.rod = equippedRod(game.profile);
+  angler.setOutfit(game.profile.outfit);
+  game.placePlayer(-4, 24, 0);
+  game.zone = 'sunny';
+  game.goldenHour = false;
+  game.playTime = 0;
+  game.nextGoldenAt = 150;
+  game.pendingWin = null;
+  cleanupFishing();
+  game.screen = 'title';
+  game.modal = null;
+  game.paused = false;
+  saveProfile(game.profile);
+  game.ui.showTitle(0, 0);
+}
+
+function travelTo(zoneId) {
+  const spot = world.spots.find((entry) => entry.zone === zoneId);
+  if (!spot) return;
+  const facing = Math.atan2(spot.water.x - spot.stand.x, spot.water.z - spot.stand.z);
+  game.placePlayer(spot.stand.x, spot.stand.z, facing);
+  game.zone = zoneId;
+  game.profile.zone = zoneId;
+  saveProfile(game.profile);
+  closePanels();
+  game.ui.banner(`Welcome to ${zoneName(zoneId)}!`);
+}
+
+function castOrHook() {
+  const phase = game.fishing.state.phase;
+  if (phase === PHASE_IDLE) {
+    const spot = nearestSpot();
+    if (!spot) return;
+    const facing = Math.atan2(spot.water.x - game.player.x, spot.water.z - game.player.z);
+    game.player.facing = facing;
+    angler.face(facing);
+    // Aim the cast at open water: step out until the ground drops below the waterline.
+    let reach = 4;
+    while (reach < 14 && groundHeight(game.player.x + Math.sin(facing) * reach, game.player.z + Math.cos(facing) * reach) >= 0.9) {
+      reach += 1;
     }
-  }
-  if (actions & ACTION_SHOP) {
-    if (state.screen === 'fishing') openOverlay('shop');
-    else if (state.screen === 'shop') closeOverlay();
-  }
-  if (actions & ACTION_MAP) {
-    if (state.screen === 'fishing') openOverlay('map');
-    else if (state.screen === 'map') closeOverlay();
-  }
-  if (actions & ACTION_FISHDEX) {
-    if (state.screen === 'fishing') openOverlay('fishdex');
-    else if (state.screen === 'fishdex') closeOverlay();
-  }
-  if (actions & ACTION_RESTART) {
-    if (state.screen === 'win') {
-      state.screen = 'fishing';
-      fishing.reset();
-    } else if (state.screen === 'fishing') {
-      fishing.reset();
+    game.fishing.cast({ x: game.player.x, z: game.player.z }, facing, game.rod, reach + 1.5);
+    game.showFishingGear(true);
+    game.audio.splash();
+  } else if (phase === PHASE_BITE) {
+    if (game.fishing.hook(game.rod, game.rod.luck, game.goldenHour, game.zone)) {
+      game.audio.bite();
     }
   }
 }
 
-function stepWorld(dt) {
-  state.time += dt;
-  if (state.messageTimer > 0) {
-    state.messageTimer -= dt;
-    if (state.messageTimer <= 0) state.message = '';
+// ---- UI wiring
+game.ui = createUI({
+  onStart: startGame,
+  onRestart: restartGame,
+  onClosePanels: closePanels,
+  onCatchOk: closePanels,
+  onOpenShop: () => {
+    if (game.screen !== 'play') return;
+    game.modal = 'shop';
+    game.ui.showShop(game.profile, 'hat');
+  },
+  onOpenMap: () => {
+    if (game.screen !== 'play') return;
+    game.modal = 'map';
+    game.ui.showMap(game.profile);
+  },
+  onOpenDex: () => {
+    if (game.screen !== 'play') return;
+    game.modal = 'dex';
+    game.ui.showFishdex(game.profile);
+  },
+  onPause: () => {
+    if (game.screen !== 'play' || game.modal) return;
+    game.modal = 'pause';
+    game.paused = true;
+    game.ui.showPause();
+  },
+  onShopTab: (tab) => game.ui.showShop(game.profile, tab),
+  onBuyClothes: (id) => {
+    if (buyClothes(game.profile, id)) {
+      angler.setOutfit(game.profile.outfit);
+      game.audio.buy();
+      game.ui.renderShop(game.profile);
+    }
+  },
+  onEquipClothes: (id) => {
+    if (equipClothes(game.profile, id)) {
+      angler.setOutfit(game.profile.outfit);
+      game.audio.click();
+      game.ui.renderShop(game.profile);
+    }
+  },
+  onBuyRod: (id) => {
+    if (buyRod(game.profile, id)) {
+      game.rod = equippedRod(game.profile);
+      game.audio.buy();
+      game.ui.renderShop(game.profile);
+    }
+  },
+  onEquipRod: (id) => {
+    if (equipRod(game.profile, id)) {
+      game.rod = equippedRod(game.profile);
+      game.audio.click();
+      game.ui.renderShop(game.profile);
+    }
+  },
+  onTravel: travelTo,
+});
+
+window.addEventListener('keydown', (event) => {
+  if (game.screen !== 'play' || game.modal) return;
+  if (event.code === 'KeyM') game.ui.showMap(game.profile), (game.modal = 'map');
+  if (event.code === 'KeyF') game.ui.showFishdex(game.profile), (game.modal = 'dex');
+});
+
+// ---- the fixed-step loop
+let last = performance.now();
+let accumulator = 0;
+
+function step(dt) {
+  if (game.screen === 'play' && !game.paused) game.playTime += dt;
+
+  // Golden hour: rare odds double, the light turns gold.
+  if (!game.goldenHour && game.screen === 'play' && game.playTime >= game.nextGoldenAt) {
+    game.goldenHour = true;
+    game.goldenLeft = 60;
+    sunLight.color.set(0xffb020);
+    scene.fog.color.set(0xf7c873);
+    scene.background.set(0xf7c873);
+    game.ui.banner('GOLDEN HOUR! Rare odds doubled for 60 seconds!');
   }
-  for (let i = state.particles.length - 1; i >= 0; i -= 1) {
-    const p = state.particles[i];
-    p.x += p.vx * dt;
-    p.y += p.vy * dt;
-    p.vy += 260 * dt;
-    p.life -= dt;
-    if (p.life <= 0) state.particles.splice(i, 1);
+  if (game.goldenHour) {
+    game.goldenLeft -= dt;
+    if (game.goldenLeft <= 0) {
+      game.goldenHour = false;
+      game.nextGoldenAt = game.playTime + 210;
+      sunLight.color.set(0xfff2cc);
+      scene.fog.color.set(0x9fd8f0);
+      scene.background.set(0x9fd8f0);
+    }
   }
-  if (state.screen !== 'fishing') return;
-  if (tickGoldenHour(goldenHour, dt, profile.boat === 'yacht')) {
-    audio.goldenHour();
-    showMessage('GOLDEN HOUR — rare odds doubled for 60 seconds!', 4);
+
+  const input = game.input.take();
+  game.cameraOrbit.yaw -= input.dx * 0.005;
+  game.cameraOrbit.pitch = Math.min(1.1, Math.max(0.12, game.cameraOrbit.pitch + input.dy * 0.004));
+
+  const busy = game.screen !== 'play' || game.modal !== null || game.paused;
+  if (!busy) {
+    if (input.click || input.space) castOrHook();
+
+    // Movement: WASD relative to the camera, blocked by deep water and the shore.
+    const move = game.input.moveVector();
+    let moving = false;
+    if (move) {
+      const yaw = game.cameraOrbit.yaw;
+      const fx = -Math.sin(yaw);
+      const fz = -Math.cos(yaw);
+      const rx = Math.cos(yaw);
+      const rz = -Math.sin(yaw);
+      const wx = fx * -move.z + rx * move.x;
+      const wz = fz * -move.z + rz * move.x;
+      const run = game.input.held('ShiftLeft') || game.input.held('ShiftRight');
+      const speed = run ? 11 : 7;
+      const nx = game.player.x + wx * speed * dt;
+      const nz = game.player.z + wz * speed * dt;
+      const tryMove = (x, z) => groundHeight(x, z) >= 0.9 && Math.hypot(x, z) <= 52;
+      if (tryMove(nx, nz)) {
+        game.player.x = nx;
+        game.player.z = nz;
+      } else if (tryMove(nx, game.player.z)) {
+        game.player.x = nx;
+      } else if (tryMove(game.player.x, nz)) {
+        game.player.z = nz;
+      }
+      game.player.facing = angleLerp(game.player.facing, Math.atan2(wx, wz), 1 - Math.pow(0.0001, dt));
+      game.player.speed = speed;
+      moving = true;
+    }
+    game.player.moving = moving;
+
+    // Zone tracking.
+    const zone = zoneAt(game.player.x, game.player.z);
+    if (zone !== game.zone) {
+      game.zone = zone;
+      game.profile.zone = zone;
+      saveProfile(game.profile);
+      game.ui.banner(`${zoneName(zone)}`);
+    }
+
+    // Fishing.
+    const reeling = game.input.held('Space');
+    const events = game.fishing.step(dt, reeling, game.rod);
+    if (events & EVENT_BITE) game.audio.bite();
+    if (events & EVENT_REEL_TICK) game.audio.reelTick();
+    if (events & EVENT_SNAPPED) {
+      game.audio.snap();
+      game.ui.banner('The line snapped! The fish got away.');
+      cleanupFishing();
+    }
+    if (events & EVENT_ESCAPED) {
+      game.audio.escape();
+      game.ui.banner('Too slow — it got away!');
+      cleanupFishing();
+    }
+    if (events & EVENT_CAUGHT) resolveCatch();
   }
-  const events = fishing.step(dt, input.isReeling(), equippedRod(profile), profile.island, luckOf(), goldenHour.active);
-  if (events & EVENT_BITE) {
-    audio.bite();
-    splashAt(fishing.state.bobberX, fishing.state.bobberY, '#ffffff');
-  }
-  if (events & EVENT_REEL_TICK) audio.reelTick();
-  if (events & EVENT_SNAPPED) {
-    audio.snap();
-    showMessage(fishing.state.message, 3);
-  }
-  if (events & EVENT_ESCAPED) {
-    audio.escape();
-    showMessage(fishing.state.message, 3);
-  }
-  if (events & EVENT_CAUGHT) {
-    const fish = fishing.state.fish;
-    state.catchFish = fish;
-    state.screen = 'catch';
-    audio.fanfare(fish.tier);
-    burst(fishing.state.bobberX, fishing.state.bobberY, '#ffd60a', 24, 160);
-  }
+
+  // Character and world animation.
+  const pose = game.fishing.state.phase === PHASE_REELING ? 'reel'
+    : game.fishing.state.phase === PHASE_WAITING || game.fishing.state.phase === PHASE_BITE ? 'cast' : null;
+  angler.group.position.set(game.player.x, groundHeight(game.player.x, game.player.z), game.player.z);
+  angler.face(game.player.facing);
+  angler.update(dt, game.player.moving, game.player.speed, pose);
+  world.update(dt, game.playTime + performance.now() * 0.001);
+
+  // Bobber and line follow the fishing session.
+  game.positionFishingGear();
 }
 
 function frame(now) {
-  requestAnimationFrame(frame);
-  const last = frame.last ?? now;
-  frame.last = now;
-  const elapsed = Math.min((now - last) / 1000, MAX_FRAME);
-  handleActions();
-  let accumulator = frame.accumulator ?? 0;
-  accumulator += elapsed;
-  while (accumulator >= STEP) {
-    stepWorld(STEP);
+  const dt = Math.min(0.1, (now - last) / 1000);
+  last = now;
+  accumulator += dt;
+  let steps = 0;
+  while (accumulator >= STEP && steps < 5) {
+    step(STEP);
     accumulator -= STEP;
+    steps += 1;
   }
-  frame.accumulator = accumulator;
-  renderer.draw(state);
+  if (steps === 5) accumulator = 0;
+
+  if (game.screen === 'title') {
+    game.titleAngle += dt * 0.045;
+    const a = game.titleAngle;
+    camera.position.set(Math.sin(a) * 42, 19, Math.cos(a) * 42);
+    camera.lookAt(0, 5, 8);
+    angler.group.position.set(0, groundHeight(0, 24), 24);
+    angler.face(Math.atan2(Math.sin(a), Math.cos(a)));
+  } else {
+    game.updateCamera();
+  }
+
+  // HUD: prompts and the tension bar follow the fishing session.
+  if (game.screen === 'play' && !game.modal) {
+    const phase = game.fishing.state.phase;
+    if (phase === PHASE_IDLE) {
+      game.ui.setPrompt(nearestSpot() ? 'Press SPACE to cast' : 'Walk to a glowing fishing spot to cast');
+      game.ui.setTension(false, 0, 0);
+    } else if (phase === PHASE_WAITING) {
+      game.ui.setPrompt('Waiting for a bite…');
+      game.ui.setTension(false, 0, 0);
+    } else if (phase === PHASE_BITE) {
+      game.ui.setPrompt('NOW! Press SPACE to hook!');
+      game.ui.setTension(false, 0, 0);
+    } else if (phase === PHASE_REELING) {
+      game.ui.setPrompt('');
+      const s = game.fishing.state;
+      game.ui.setTension(true, s.tension, 1 - s.distance / s.distanceTotal);
+    } else {
+      game.ui.setPrompt('');
+      game.ui.setTension(false, 0, 0);
+    }
+    game.ui.updateHUD(game.hudState());
+  }
+
+  renderer.render(scene, camera);
 }
 
-function runShot(name) {
-  // A staged scene shows a richer game than a fresh profile: some coins, better
-  // gear, a further island and a few fish already in the log.
-  if (name !== 'title') {
-    profile.coins = 1240;
-    profile.rod = 'carbon';
-    profile.ownedRods = ['bamboo', 'fiberglass', 'carbon'];
-    profile.boat = 'sailboat';
-    profile.ownedBoats = ['rowboat', 'sailboat'];
-    profile.island = 'coral';
-    profile.caught = {
-      'sunny-minnow': { weight: 0.3, coins: 8 },
-      'striped-perch': { weight: 0.9, coins: 12 },
-      'blue-gill': { weight: 1.1, coins: 28 },
-      'golden-carp': { weight: 2.4, coins: 95 },
-      'reef-clownfish': { weight: 0.2, coins: 10 },
-      'azure-tang': { weight: 0.8, coins: 33 },
-    };
-  }
-  const staged = stageShot(name, {
-    random,
-    fishing,
-    profile,
-    rod: equippedRod(profile),
-    luck: luckOf(),
-    goldenHour,
-  });
-  state.screen = staged.screen;
-  if (staged.screen === 'catch') state.catchFish = fishing.state.fish;
-  state.time = 12;
-  let painted = 0;
-  function paint() {
-    renderer.draw(state);
-    painted += 1;
-    if (painted < 2) requestAnimationFrame(paint);
-    else window.__shotReady = true;
-  }
-  requestAnimationFrame(paint);
-}
+window.addEventListener('resize', () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
 
-if (shot) runShot(shot);
-else requestAnimationFrame(frame);
+// ---- boot
+game.placePlayer(-4, 24, 0);
+if (shotName) {
+  stageShot(shotName, game, rng);
+  game.updateCamera();
+  angler.update(0, false, 7, shotName === 'play' ? 'reel' : null);
+  game.positionFishingGear();
+  renderer.render(scene, camera);
+  renderer.render(scene, camera);
+  renderer.render(scene, camera);
+  window.__shotReady = true;
+} else {
+  game.ui.showTitle(game.profile.bestScore, collectionPercent(new Set(Object.keys(game.profile.caught))));
+  requestAnimationFrame(frame);
+}

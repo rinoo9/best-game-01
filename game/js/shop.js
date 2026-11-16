@@ -1,62 +1,75 @@
-// The shop: rods and boats, their prices, and buying and equipping them.
-// A rod improves cast distance, line strength and luck; a boat unlocks islands.
+// The shops: rods and the clothing catalog. Buying always equips the item at
+// once, so the chibi visibly changes the moment coins are spent.
 
-import { BOATS, RODS } from './config.js';
+import { CLOTHES, RODS } from './config.js';
+import { saveProfile } from './save.js';
 
-export function createShop() {
-  return { tab: 'rods', selectedRod: 0, selectedBoat: 0 };
+/** All clothing of one slot, in catalog order. */
+export function clothesBySlot(slot) {
+  return CLOTHES.filter((item) => item.slot === slot);
 }
 
-/** The rod a profile has equipped. */
+/** A clothing item by id, or null. */
+export function clothesById(id) {
+  return CLOTHES.find((item) => item.id === id) ?? null;
+}
+
+/** Whether the profile owns a clothing item. */
+export function ownsClothes(profile, itemId) {
+  return profile.ownedClothes.includes(itemId);
+}
+
+/** Whether a clothing item is the one equipped in its slot. */
+export function isEquipped(profile, itemId) {
+  const item = clothesById(itemId);
+  return item !== null && profile.outfit[item.slot] === itemId;
+}
+
+/** Buy a clothing item: deducts coins, owns it and equips it. Returns true when bought. */
+export function buyClothes(profile, itemId) {
+  const item = clothesById(itemId);
+  if (!item || ownsClothes(profile, itemId) || profile.coins < item.price) return false;
+  profile.coins -= item.price;
+  profile.ownedClothes.push(itemId);
+  profile.outfit[item.slot] = itemId;
+  saveProfile(profile);
+  return true;
+}
+
+/** Equip an owned clothing item. Returns true when equipped. */
+export function equipClothes(profile, itemId) {
+  const item = clothesById(itemId);
+  if (!item || !ownsClothes(profile, itemId)) return false;
+  profile.outfit[item.slot] = itemId;
+  saveProfile(profile);
+  return true;
+}
+
+/** A rod by id, or the bamboo rod. */
+export function rodById(id) {
+  return RODS.find((rod) => rod.id === id) ?? RODS[0];
+}
+
+/** The rod the profile has equipped. */
 export function equippedRod(profile) {
-  return RODS.find((rod) => rod.id === profile.rod) ?? RODS[0];
-}
-
-/** The boat a profile has equipped. */
-export function equippedBoat(profile) {
-  return BOATS.find((boat) => boat.id === profile.boat) ?? BOATS[0];
-}
-
-/** Whether a profile owns a rod. */
-export function ownsRod(profile, rodId) {
-  return profile.ownedRods.includes(rodId);
-}
-
-/** Whether a profile owns a boat. */
-export function ownsBoat(profile, boatId) {
-  return profile.ownedBoats.includes(boatId);
+  return rodById(profile.rod);
 }
 
 /** Buy a rod: deducts coins, owns it and equips it. Returns true when bought. */
 export function buyRod(profile, rodId) {
-  const rod = RODS.find((entry) => entry.id === rodId);
-  if (!rod || ownsRod(profile, rodId) || profile.coins < rod.price) return false;
+  const rod = rodById(rodId);
+  if (!rod || profile.ownedRods.includes(rodId) || profile.coins < rod.price) return false;
   profile.coins -= rod.price;
   profile.ownedRods.push(rodId);
   profile.rod = rodId;
-  return true;
-}
-
-/** Buy a boat: deducts coins, owns it and equips it. Returns true when bought. */
-export function buyBoat(profile, boatId) {
-  const boat = BOATS.find((entry) => entry.id === boatId);
-  if (!boat || ownsBoat(profile, boatId) || profile.coins < boat.price) return false;
-  profile.coins -= boat.price;
-  profile.ownedBoats.push(boatId);
-  profile.boat = boatId;
+  saveProfile(profile);
   return true;
 }
 
 /** Equip an owned rod. Returns true when equipped. */
 export function equipRod(profile, rodId) {
-  if (!ownsRod(profile, rodId)) return false;
+  if (!profile.ownedRods.includes(rodId)) return false;
   profile.rod = rodId;
-  return true;
-}
-
-/** Equip an owned boat. Returns true when equipped. */
-export function equipBoat(profile, boatId) {
-  if (!ownsBoat(profile, boatId)) return false;
-  profile.boat = boatId;
+  saveProfile(profile);
   return true;
 }
