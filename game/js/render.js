@@ -304,7 +304,7 @@ function drawTensionBar(ctx, fishing) {
   ctx.fillStyle = 'rgba(10, 20, 34, 0.7)';
   roundRect(ctx, x - 14, y - 34, 52, h + 68, 10);
   ctx.fill();
-  text(ctx, 'TENSION', x + 12, y - 14, 13, PALETTE.text, 'center', '800');
+  text(ctx, 'TENSION', x + 12, y - 14, 11, PALETTE.text, 'center', '800');
   const frac = fishing.tension / 100;
   const barH = h * frac;
   const grad = ctx.createLinearGradient(0, y + h, 0, y);
@@ -372,9 +372,9 @@ function shopRows(shop) {
 
 export function shopHitRects(shop) {
   const rects = [
-    { kind: 'tab', id: 'rods', rect: { x: 200, y: 108, w: 120, h: 36 } },
-    { kind: 'tab', id: 'boats', rect: { x: 330, y: 108, w: 120, h: 36 } },
-    { kind: 'close', id: 'close', rect: { x: 1060, y: 108, w: 60, h: 36 } },
+    { kind: 'tab', id: 'rods', rect: { x: 460, y: 100, w: 120, h: 34 } },
+    { kind: 'tab', id: 'boats', rect: { x: 590, y: 100, w: 120, h: 34 } },
+    { kind: 'close', id: 'close', rect: { x: 1060, y: 100, w: 60, h: 36 } },
   ];
   for (const { item, rect } of shopRows(shop)) {
     rects.push({ kind: 'row', id: item.id, rect: { x: rect.x + rect.w - 170, y: rect.y + 16, w: 150, h: 42 } });
@@ -385,20 +385,20 @@ export function shopHitRects(shop) {
 function drawShop(ctx, state) {
   const { shop, profile } = state;
   drawPanel(ctx, 160, 80, 960, 560);
-  text(ctx, 'Tackle Shop', 200, 128, 30, PALETTE.text, 'left', '900');
-  text(ctx, `${profile.coins.toLocaleString('en-US')} coins`, 960, 128, 22, '#ffd60a', 'left', '800');
+  text(ctx, 'Tackle Shop', 200, 120, 28, PALETTE.text, 'left', '900');
+  text(ctx, `${profile.coins.toLocaleString('en-US')} coins`, 1040, 120, 22, '#ffd60a', 'right', '800');
   const tabs = [
     { id: 'rods', label: 'Rods' },
     { id: 'boats', label: 'Boats' },
   ];
   for (const tab of tabs) {
-    const rect = { x: tab.id === 'rods' ? 200 : 330, y: 108, w: 120, h: 36 };
+    const rect = { x: tab.id === 'rods' ? 460 : 590, y: 100, w: 120, h: 34 };
     ctx.fillStyle = shop.tab === tab.id ? PALETTE.button : 'rgba(255,255,255,0.12)';
     roundRect(ctx, rect.x, rect.y, rect.w, rect.h, 8);
     ctx.fill();
-    text(ctx, tab.label, rect.x + rect.w / 2, rect.y + 24, 16, '#ffffff', 'center', '700');
+    text(ctx, tab.label, rect.x + rect.w / 2, rect.y + 23, 16, '#ffffff', 'center', '700');
   }
-  button(ctx, { x: 1060, y: 108, w: 60, h: 36 }, 'Close');
+  button(ctx, { x: 1060, y: 100, w: 60, h: 36 }, 'Close');
   for (const { item, rect } of shopRows(shop)) {
     ctx.fillStyle = 'rgba(255,255,255,0.07)';
     roundRect(ctx, rect.x, rect.y, rect.w, rect.h, 10);
