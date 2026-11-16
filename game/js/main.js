@@ -8,7 +8,7 @@
 // window.__shotReady for a screenshot.
 
 import { FIELD, STEP } from './config.js';
-import { ALL_FISH } from './fish.js';
+import { ALL_FISH } from './config.js';
 import { createRandom, range } from './random.js';
 import { ACTION_CONFIRM, ACTION_FISHDEX, ACTION_MAP, ACTION_PAUSE, ACTION_RESTART, ACTION_SHOP, createInput } from './input.js';
 import { createAudio } from './audio.js';
