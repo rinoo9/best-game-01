@@ -29,6 +29,103 @@ function demoProfile(profile) {
   profile.ownedClothes = ['green-shirt'];
 }
 
+// ---------------------------------------------------------------------------
+// Self-export of a staged shot as a real 1280x720 JPEG file.
+//
+// The screenshot taker cannot save a viewport screenshot, so the game exports
+// its own shot: the WebGL canvas (preserveDrawingBuffer is on, see main.js)
+// is drawn into an offscreen 2D canvas, and the DOM HUD/panels are rasterized
+// on top via an SVG <foreignObject> with the game's CSS inlined, then the
+// composite is downloaded as a JPEG. The foreignObject re-lays the DOM out
+// at exactly 1280x720, so the HUD in the JPEG sits exactly where it sits on
+// a real 1280x720 screen; the WebGL canvas is also exactly 1280x720 in shot
+// mode, so the two layers line up pixel-for-pixel with no scaling.
+// ---------------------------------------------------------------------------
+
+/** Download filename per shot (the cover is first by name). */
+const SHOT_FILES = { catch: '1-catch.jpg', title: '2-title.jpg', play: '3-play.jpg', shop: '4-shop.jpg' };
+
+const SHOT_W = 1280;
+const SHOT_H = 720;
+
+/** Escape text for embedding inside an XML document. */
+function escapeXml(text) {
+  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+/** The game's own stylesheet text, fetched same-origin. */
+async function fetchCssText() {
+  const url = new URL('css/style.css', document.baseURI);
+  const response = await fetch(url);
+  if (!response.ok) throw new Error(`shot export: CSS fetch failed (${response.status})`);
+  return response.text();
+}
+
+/**
+ * Clone the visible HUD and panels into a fresh 1280x720 wrapper. The clone
+ * is never attached to the live document: it is only serialized into the SVG,
+ * where the inlined CSS lays it out again at exactly 1280x720. Inline styles
+ * (XP bar, tension fill, catch-title colour) survive cloneNode, so the staged
+ * values are preserved.
+ */
+function buildHudClone() {
+  const wrapper = document.createElement('div');
+  wrapper.setAttribute('style', `position:relative;width:${SHOT_W}px;height:${SHOT_H}px;overflow:hidden;font-family:system-ui,-apple-system,"Segoe UI",sans-serif;color:#f8f9fa;`);
+  const hud = document.getElementById('hud');
+  if (hud && !hud.classList.contains('hidden')) wrapper.appendChild(hud.cloneNode(true));
+  for (const id of ['title-screen', 'catch-panel', 'shop-panel', 'map-panel', 'dex-panel', 'win-panel', 'pause-panel']) {
+    const el = document.getElementById(id);
+    if (el && !el.classList.contains('hidden')) wrapper.appendChild(el.cloneNode(true));
+  }
+  return wrapper;
+}
+
+/** Rasterize the HUD clone to an Image by way of an SVG foreignObject. */
+async function rasterizeHud() {
+  const cssText = await fetchCssText();
+  const wrapper = buildHudClone();
+  const hudXml = new XMLSerializer().serializeToString(wrapper);
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${SHOT_W}" height="${SHOT_H}" viewBox="0 0 ${SHOT_W} ${SHOT_H}"><style>${escapeXml(cssText)}</style><foreignObject x="0" y="0" width="${SHOT_W}" height="${SHOT_H}">${hudXml}</foreignObject></svg>`;
+  const blob = new Blob([svg], { type: 'image/svg+xml;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  try {
+    const img = new Image();
+    await new Promise((resolve, reject) => {
+      img.onload = resolve;
+      img.onerror = () => reject(new Error('shot export: HUD SVG failed to load as an image'));
+      img.src = url;
+    });
+    return img;
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
+/**
+ * Composite the staged scene and the HUD into one 1280x720 JPEG and trigger
+ * its download. Resolves after the download has been triggered; rejects (and
+ * logs) on any failure so the caller can keep window.__shotReady false.
+ */
+export async function exportShot(name, game) {
+  const file = SHOT_FILES[name] ?? 'shot.jpg';
+  // Fresh render right before the readback, so the buffer is current.
+  game.renderer.render(game.scene, game.camera);
+  const hudImage = await rasterizeHud();
+  const out = document.createElement('canvas');
+  out.width = SHOT_W;
+  out.height = SHOT_H;
+  const ctx = out.getContext('2d');
+  ctx.drawImage(game.renderer.domElement, 0, 0, SHOT_W, SHOT_H);
+  ctx.drawImage(hudImage, 0, 0, SHOT_W, SHOT_H);
+  const dataUrl = out.toDataURL('image/jpeg', 0.85);
+  const link = document.createElement('a');
+  link.href = dataUrl;
+  link.download = file;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+}
+
 export function stageShot(name, game, rng) {
   void rng;
   demoProfile(game.profile);

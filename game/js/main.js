@@ -19,7 +19,7 @@ import { buyClothes, buyRod, equipClothes, equipRod, equippedRod } from './shop.
 import { createAudio } from './audio.js';
 import { createInput } from './input.js';
 import { createUI } from './ui.js';
-import { stageShot } from './shots.js';
+import { exportShot, stageShot } from './shots.js';
 
 const params = new URLSearchParams(window.location.search);
 const shotName = params.get('shot');
@@ -40,7 +40,9 @@ function angleLerp(from, to, t) {
 
 // ---- renderer, scene, camera, lights
 const container = document.getElementById('scene-container');
-const renderer = new THREE.WebGLRenderer({ antialias: true });
+// preserveDrawingBuffer: shot mode reads the canvas back with drawImage, so
+// the buffer must survive the frame (see exportShot in shots.js).
+const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -51,6 +53,27 @@ scene.background = new THREE.Color(0x9fd8f0);
 scene.fog = new THREE.Fog(0x9fd8f0, 70, 230);
 
 const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 600);
+
+// Shot mode stages and exports exactly 1280x720, whatever the window is:
+// the renderer's drawing buffer and the canvas style are fixed at 1280x720
+// with pixel ratio 1, the app (which the HUD and panels are laid out in) is
+// pinned to the top-left at 1280x720, and the camera aspect matches, so the
+// staged scene and the HUD composite pixel-for-pixel in exportShot.
+if (shotName) {
+  renderer.setPixelRatio(1);
+  renderer.setSize(1280, 720, false);
+  renderer.domElement.style.width = '1280px';
+  renderer.domElement.style.height = '720px';
+  const app = document.getElementById('app');
+  app.style.position = 'absolute';
+  app.style.left = '0';
+  app.style.top = '0';
+  app.style.width = '1280px';
+  app.style.height = '720px';
+  camera.aspect = 1280 / 720;
+  camera.updateProjectionMatrix();
+}
+
 const hemi = new THREE.HemisphereLight(0xbfdfff, 0x3a7d44, 0.95);
 scene.add(hemi);
 const sunLight = new THREE.DirectionalLight(0xfff2cc, 1.15);
@@ -507,6 +530,7 @@ function frame(now) {
 }
 
 window.addEventListener('resize', () => {
+  if (shotName) return; // shot mode stays pinned at 1280x720
   camera.aspect = window.innerWidth / window.innerHeight;
   camera.updateProjectionMatrix();
   renderer.setSize(window.innerWidth, window.innerHeight);
@@ -522,7 +546,15 @@ if (shotName) {
   renderer.render(scene, camera);
   renderer.render(scene, camera);
   renderer.render(scene, camera);
-  window.__shotReady = true;
+  // __shotReady is set only after the JPEG download has been triggered; on
+  // any export failure it stays false and the error is logged, so the shot
+  // taker never collects a HUD-less or blank image.
+  try {
+    await exportShot(shotName, game);
+    window.__shotReady = true;
+  } catch (error) {
+    console.error('Shot export failed:', error);
+  }
 } else {
   game.ui.showTitle(game.profile.bestScore, collectionPercent(new Set(Object.keys(game.profile.caught))));
   requestAnimationFrame(frame);
